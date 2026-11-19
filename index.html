@@ -79,7 +79,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:.
 <input type="file" id="inFoto" accept="image/*" capture="environment" hidden>
 <script>
 "use strict";
-const PROGRAMA="V12", BUILD="V12-4";
+const PROGRAMA="V12", BUILD="V12-5";
 const CORREO_PRL="prevencion.milsa@milsatrillo.com", REPO_DEF="ALD1978/Izado-datos", DATOS_PATH="datos/Izado-datos-movil.json";
 document.getElementById("ver").textContent=PROGRAMA;
 
@@ -382,7 +382,9 @@ function gh(){try{const c=JSON.parse(localStorage.getItem("izm-gh")||"null");ret
 function movilId(){let m=localStorage.getItem("izm-movil-id");if(!m){m=Math.random().toString(36).slice(2,8);localStorage.setItem("izm-movil-id",m)}return m}
 function b64utf8(s){const u=new TextEncoder().encode(s);let b="";for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)}
 async function ghFetch(path,opt={},raw){const c=gh();const r=await fetch(`https://api.github.com/repos/${c.repo}/contents${path?"/"+path.split("/").map(encodeURIComponent).join("/"):""}`,{...opt,cache:"no-store",headers:{Authorization:`Bearer ${c.token}`,Accept:raw?"application/vnd.github.raw+json":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28",...(opt.headers||{})}});
-  if(r.status===404)return null;if(r.status===401||r.status===403)throw new Error("La clave no vale o no tiene permiso (pide una nueva a Prevención).");if(!r.ok)throw new Error(`GitHub respondió ${r.status}. Revisa el nombre del repositorio (ALD1978/Izado-datos).`);return raw?r.text():r.json()}
+  if(r.status===404)return null;if(r.status===401||r.status===403){let m="";try{m=(await r.json()).message||""}catch(e){}
+    if(r.status===401)throw new Error(`GitHub no reconoce la clave (401${m?": "+m:""}). Está mal copiada, caducada o borrada: cópiala de nuevo o crea otra.`);
+    throw new Error(`La clave entra pero no tiene permiso (403${m?": "+m:""}). En GitHub, edita la clave: «Only select repositories» → Izado-datos y Permissions → Contents → «Read and write».`)}if(!r.ok)throw new Error(`GitHub respondió ${r.status}. Revisa el nombre del repositorio (ALD1978/Izado-datos).`);return raw?r.text():r.json()}
 const ghPut=(path,b64,msg,sha)=>ghFetch(path,{method:"PUT",body:JSON.stringify(sha?{message:msg,content:b64,sha}:{message:msg,content:b64})});
 function deb64utf8(b){const s=atob(String(b||"").replace(/\s/g,""));const u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return new TextDecoder().decode(u)}
 async function ghJSON(path){const r=await ghFetch(path);if(!r||Array.isArray(r))return {sha:null,data:null};return {sha:r.sha,data:JSON.parse(deb64utf8(r.content))}}
