@@ -1,5 +1,5 @@
 // Izado móvil · guarda el programa en el móvil para usarlo sin cobertura.
-const VERSION = "izado-movil-V12-1";
+const VERSION = "izado-movil-V12-2";
 const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-mask.png", "./apple-touch-icon.png", "./favicon.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

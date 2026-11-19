@@ -79,7 +79,8 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:.
 <input type="file" id="inFoto" accept="image/*" capture="environment" hidden>
 <script>
 "use strict";
-const PROGRAMA="V12", BUILD="V12-1";
+const PROGRAMA="V12", BUILD="V12-2";
+const CORREO_PRL="prevencion.milsa@milsatrillo.com", REPO_DEF="ALD1978/Izado-datos", DATOS_PATH="datos/Izado-datos-movil.json";
 document.getElementById("ver").textContent=PROGRAMA;
 
 /* ---------- Tipos y comprobaciones (igual que la app de claude.ai) ---------- */
@@ -131,15 +132,17 @@ function rebuild(){
   // Equipos de los datos + lo hecho en el móvil (altas, movimientos, revisiones)
   S.eq=new Map();
   for(const e of S.datos.equipos) S.eq.set(e.c,{...e});
-  const its=[...S.items].sort((a,b)=>(a.ts||0)-(b.ts||0));
+  const inc=new Set(S.datos.incluye||[]);
+  const rem=(S.remotos||[]).filter(r=>!inc.has(r.name)).flatMap(r=>r.items.map(i=>({...i,remoto:r.movil||"otro móvil"})));
+  const its=[...S.items.filter(i=>!(i.envio&&inc.has(i.envio))),...rem].sort((a,b)=>(a.ts||0)-(b.ts||0));
   for(const it of its){
-    if(it.clase==="alta"&&it.codigo){S.eq.set(it.codigo,{c:it.codigo,t:it.tipo,d:it.descripcion,cmu:it.cmu,l:it.longitud,mat:it.material,m:it.marca,ub:it.ubicacion,est:"Pendiente de revisar",serie:it.serie,nuevo:true,mini:it.fotos[0]&&it.fotos[0].mini})}
+    if(it.clase==="alta"&&it.codigo){S.eq.set(it.codigo,{c:it.codigo,t:it.tipo,d:it.descripcion,cmu:it.cmu,l:it.longitud,mat:it.material,m:it.marca,ub:it.ubicacion,est:"Pendiente de revisar",serie:it.serie,nuevo:true,mini:(it.fotos||[])[0]&&it.fotos[0].mini})}
     if(it.clase==="movimiento") for(const c of it.equipos){const e=S.eq.get(c);if(e)e.ub=it.a}
     if(it.clase==="revision"){const e=S.eq.get(it.equipo);if(e){e.est=it.resultado;e.ult=it.fecha;e.prox=null;e.revMovil=true}}
   }
   const p=S.items.filter(i=>!i.enviado).length, b=$("#cntPend");b.hidden=!p;b.textContent=p;
 }
-async function cargarItems(){S.items=await itemsAll();rebuild()}
+async function cargarItems(){S.items=await itemsAll();try{S.remotos=(await kvGet("remotos"))||[]}catch(e){S.remotos=[]}rebuild()}
 
 /* ---------- Fotos ---------- */
 function pedirFoto(){return new Promise(ok=>{const i=$("#inFoto");i.value="";i.onchange=()=>ok(i.files[0]||null);i.click()})}
@@ -156,7 +159,7 @@ async function nuevaFoto(tag){const f=await pedirFoto();if(!f)return null;const 
 function thumbs(fotos,delAttr){return `<div class="thumbs">${fotos.map((f,i)=>`<figure><img src="${f.mini||f.data}" alt="${esc(f.tag)}">${delAttr?`<button class="x" ${delAttr}="${i}" aria-label="Quitar foto">×</button>`:""}<figcaption>${esc(f.tag)}</figcaption></figure>`).join("")}</div>`}
 
 /* ---------- Carga de datos ---------- */
-$("#btnDatos").onclick=()=>{$("#inDatos").value="";$("#inDatos").click()};
+$("#btnDatos").onclick=()=>{if(gh())return sincronizar(false);$("#inDatos").value="";$("#inDatos").click()};
 $("#inDatos").onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
   try{const d=JSON.parse(await f.text());
@@ -167,7 +170,7 @@ $("#inDatos").onchange=async e=>{
     go("equipos");
   }catch(err){toast("No se ha podido cargar: "+err.message,5000)}
 };
-function hdr(){$("#hdDatos").textContent=S.datos?`Datos del ${fd(S.datos.fecha)} · ${S.datos.equipos.length} equipos`:"Sin datos cargados";$("#nav").hidden=!S.datos}
+function hdr(){$("#btnDatos").textContent=gh()?"⟳ Actualizar":"⟳ Datos";$("#hdDatos").textContent=S.datos?`Datos del ${fd(S.datos.fecha)} · ${S.datos.equipos.length} equipos`:"Sin datos cargados";$("#nav").hidden=!S.datos}
 
 /* ---------- Navegación ---------- */
 $$("#nav button").forEach(b=>b.onclick=()=>go(b.dataset.tab));
@@ -184,8 +187,11 @@ function vBienvenida(){
   <p>La primera vez hay que cargar el <b>archivo de datos</b> (<span class="code">Izado-datos-movil_${PROGRAMA}.json</span>) que manda Prevención por WhatsApp o correo.</p>
   <ol class="muted"><li>En WhatsApp, descárgalo y guárdalo (Descargas o «WhatsApp Documents»). En iPhone: «Guardar en Archivos».</li><li>Pulsa el botón y elígelo.</li></ol>
   <button class="pri big" id="bCargar">Cargar archivo de datos</button>
+  <p class="muted">¿Te han dado una <b>clave de acceso</b>? <button class="sec" id="bConB">Conectar con clave</button></p>
   <p class="muted">Los datos se quedan en este móvil. Después funciona sin cobertura.</p></div>`;
-  $("#bCargar").onclick=()=>$("#btnDatos").click();
+  $("#bCargar").onclick=()=>{$("#inDatos").value="";$("#inDatos").click()};
+  $("#bConB").onclick=async()=>{const nombre=(prompt("Nombre de este móvil (por ejemplo Almacén 1):")||"").trim();if(!nombre)return;const token=(prompt("Clave de acceso:")||"").trim();if(!token)return;
+    localStorage.setItem("izm-gh",JSON.stringify({nombre,token,repo:REPO_DEF}));await sincronizar(false);if(S.datos){await cargarItems();go("equipos")}else{localStorage.removeItem("izm-gh");hdr()}};
 }
 
 /* ---------- Equipos ---------- */
@@ -224,7 +230,7 @@ function vFicha(c){
   $("#bFoto").onclick=async()=>{const f=await nuevaFoto("Estado");if(!f)return;const nota=prompt("Nota de la foto (qué se ve, incidencia…):","")||"";f.tag=nota?`Incidencia: ${nota}`:"Estado";
     await guardarItem({clase:"foto",equipo:c,nota,fotos:[f]});toast("Foto guardada");go("ficha",c)};
 }
-function etiqueta(i){
+function etiqueta(i){if(i.remoto)return etiqueta({...i,remoto:null})+` · ${i.remoto}`;
   if(i.clase==="alta")return `Alta ${i.codigo||"(código por leer de la foto)"} · ${i.tipo}`;
   if(i.clase==="revision")return `Revisión ${i.equipo}: ${i.resultado==="Cuarentena"?"No apto (cuarentena)":i.resultado}`;
   if(i.clase==="movimiento")return `${i.equipos.length} equipo${i.equipos.length===1?"":"s"}: ${ubicName(i.de)} → ${ubicName(i.a)}`;
@@ -358,32 +364,103 @@ function vMover(opt={}){
 }
 
 /* ---------- Enviar ---------- */
+/* ---------- Conexión con el repositorio privado de datos (GitHub) ---------- */
+function gh(){try{const c=JSON.parse(localStorage.getItem("izm-gh")||"null");return c&&c.token&&c.repo?c:null}catch(e){return null}}
+function movilId(){let m=localStorage.getItem("izm-movil-id");if(!m){m=Math.random().toString(36).slice(2,8);localStorage.setItem("izm-movil-id",m)}return m}
+function b64utf8(s){const u=new TextEncoder().encode(s);let b="";for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)}
+async function ghFetch(path,opt={},raw){const c=gh();const r=await fetch(`https://api.github.com/repos/${c.repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`,{...opt,cache:"no-store",headers:{Authorization:`Bearer ${c.token}`,Accept:raw?"application/vnd.github.raw+json":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28",...(opt.headers||{})}});
+  if(r.status===404)return null;if(r.status===401||r.status===403)throw new Error("La clave no vale o no tiene permiso (pide una nueva a Prevención).");if(!r.ok)throw new Error(`GitHub respondió ${r.status}`);return raw?r.text():r.json()}
+const ghPut=(path,b64,msg)=>ghFetch(path,{method:"PUT",body:JSON.stringify({message:msg,content:b64})});
+let sincronizando=false;
+async function sincronizar(silencio){
+  if(!gh()||sincronizando)return;if(!navigator.onLine){if(!silencio)toast("Sin cobertura: se usa lo guardado en el móvil.");return}
+  sincronizando=true;const b=$("#btnDatos");b.disabled=true;b.textContent="⟳ …";
+  try{
+    const txt=await ghFetch(DATOS_PATH,{},true);
+    if(txt){const d=JSON.parse(txt);if(d.formato==="izado-datos-movil"&&(!S.datos||d.generado!==S.datos.generado)){await kvSet("datos",d);S.datos=d}}
+    if(!S.datos)throw new Error("El repositorio aún no tiene el archivo de datos.");
+    const inc=new Set(S.datos.incluye||[]), yo=movilId();
+    let rem=((await kvGet("remotos"))||[]).filter(r=>!inc.has(r.name));
+    const lst=(await ghFetch("envios"))||[];const ya=new Set(rem.map(r=>r.name));
+    for(const f of lst){if(f.type!=="file"||!f.name.endsWith(".json")||inc.has(f.name)||ya.has(f.name)||f.name.includes("_"+yo+"."))continue;
+      try{const e=JSON.parse(await ghFetch("envios/"+f.name,{},true));rem.push({name:f.name,movil:e.movil,items:e.items||[]})}catch(e){}}
+    await kvSet("remotos",rem);await cargarItems();hdr();
+    await subirCola(true);
+    localStorage.setItem("izm-sync",`${fd(hoy())} ${hora()}`);
+    if(!silencio)toast(`Actualizado: ${S.eq.size} equipos`);
+    if(["equipos","enviar"].includes(S.tab)&&!(S.draft&&S.draft.sucio))go(S.tab);
+  }catch(err){if(!silencio)toast("No se ha podido actualizar: "+err.message,5000)}
+  finally{sincronizando=false;b.disabled=false;hdr()}
+}
+async function subirCola(silencio){
+  const cola=S.items.filter(i=>!i.enviado&&i.cola);if(!cola.length||!gh()||!navigator.onLine)return;
+  try{await subirGH(cola);if(!silencio)toast("Enviado a Prevención")}catch(e){if(!silencio)toast("No se ha podido enviar: "+e.message,5000)}
+}
+async function subirGH(items){
+  const c=gh(), yo=movilId(), d=new Date(), lote=`${hoy()}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`, name=`${lote}_${yo}.json`;
+  const out=[];
+  for(const it of items){const {enviado,enviadoEl,lote:_l,ts,cola,fotos,...r}=it;const refs=[];
+    for(const [n,f] of (fotos||[]).entries()){const fp=`fotos/${lote}_${yo}_${it.id}_${n+1}.jpg`;if(!f.subida){await ghPut(fp,f.data.split(",")[1],`Foto ${fp}`);f.subida=fp;await itemPut(it)}refs.push({tag:f.tag,hora:f.hora,path:f.subida})}
+    out.push({...r,ts,fotos:refs})}
+  const doc={formato:"izado-movil",version:2,programa:BUILD,datos:S.datos.fecha,lote,movil:c.nombre||yo,movilId:yo,generado:d.toISOString(),items:out};
+  await ghPut("envios/"+name,b64utf8(JSON.stringify(doc)),`Envío del móvil ${c.nombre||yo}: ${items.length} cambio(s)`);
+  for(const i of items){i.enviado=true;i.cola=false;i.enviadoEl=`${fd(hoy())} ${hora()}`;i.lote=lote;i.envio=name;await itemPut(i)}
+  await cargarItems();
+}
+function mailto(items){const res=(items||[]).map(i=>"- "+etiqueta(i)).join("\n");
+  return `mailto:${CORREO_PRL}?subject=${encodeURIComponent(`Izado móvil · ${items.length} cambio(s) · ${fd(hoy())}`)}&body=${encodeURIComponent(`Cambios registrados en Izado desde el móvil${gh()?" (ya subidos al repositorio de datos)":" (adjunto el archivo .json)"}:\n${res}\n`)}`}
 function vEnviar(){
   const pend=S.items.filter(i=>!i.enviado).sort((a,b)=>a.ts-b.ts), env=S.items.filter(i=>i.enviado).sort((a,b)=>b.ts-a.ts);
-  const nf=pend.reduce((n,i)=>n+(i.fotos||[]).length,0);
+  const nf=pend.reduce((n,i)=>n+(i.fotos||[]).length,0), c=gh();
   $("#app").innerHTML=`<div class="card"><h2>Enviar a Prevención</h2>
-   ${pend.length?`<p style="margin-top:0"><b>${pend.length}</b> cambio${pend.length===1?"":"s"} sin enviar · ${nf} foto${nf===1?"":"s"}.</p><button class="pri big" id="bEnv">📤 Enviar a Prevención</button>
-   <p class="muted">Se abre el menú de compartir del móvil (WhatsApp, correo, Teams) con un archivo <span class="code">.json</span>. Prevención lo pasa a Claude, que lee las fotos y lo carga en Izado.</p>`:`<p class="note ok" style="margin:0">Todo enviado.</p>`}</div>
+   <p style="margin-top:0">Correo de Prevención: <a href="mailto:${CORREO_PRL}" class="code" style="color:var(--brand-deep)">${CORREO_PRL}</a></p>
+   ${pend.length?`<p><b>${pend.length}</b> cambio${pend.length===1?"":"s"} sin enviar · ${nf} foto${nf===1?"":"s"}${pend.some(i=>i.cola)?" · <b>en cola</b>: se suben solos al volver la cobertura":""}.</p><button class="pri big" id="bEnv">📤 Enviar a Prevención</button>
+   <p class="muted">${c?"Se sube al repositorio de datos de Prevención y los demás móviles lo ven al actualizar. Sin cobertura queda en cola.":`Se abre el menú de compartir del móvil: elige <b>Correo</b> (Gmail, Outlook) y pon como destinatario <b>${CORREO_PRL}</b>, o WhatsApp.`}</p>`:`<p class="note ok" style="margin:0">Todo enviado.</p>`}
+   <a class="btn sec" style="display:flex;align-items:center;justify-content:center;text-decoration:none;margin-top:8px" href="${esc(mailto(pend.length?pend:env.slice(0,20)))}">✉ Escribir a ${CORREO_PRL}</a></div>
   ${pend.length?`<div class="card"><h3 style="margin-top:0">Sin enviar</h3>${pend.map(i=>`<div class="it"><div class="m"><b>${esc(etiqueta(i))}</b><div class="muted">${fd(i.fecha)} ${esc(i.hora)} · ${(i.fotos||[]).length} foto(s)</div></div><button data-del="${i.id}" aria-label="Borrar">Borrar</button></div>`).join("")}</div>`:""}
   ${env.length?`<div class="card"><h3 style="margin-top:0">Enviado</h3>${env.slice(0,30).map(i=>`<div class="it"><div class="m">${esc(etiqueta(i))}<div class="muted">${fd(i.fecha)} · enviado ${esc(i.enviadoEl||"")}</div></div></div>`).join("")}
-   <div class="row" style="margin-top:8px"><button id="bReenv">Volver a enviar lo último</button><button id="bLimpiar">Borrar lo enviado del móvil</button></div></div>`:""}
+   <div class="row" style="margin-top:8px">${c?"":`<button id="bReenv">Volver a enviar lo último</button>`}<button id="bLimpiar">Borrar lo enviado del móvil</button></div></div>`:""}
+  <div class="card"><h3 style="margin-top:0">Conexión con Prevención</h3>
+   ${c?`<p class="note ok" style="margin:0 0 8px">Conectado a <span class="code">${esc(c.repo)}</span> como <b>${esc(c.nombre||movilId())}</b>. Última actualización: ${esc(localStorage.getItem("izm-sync")||"—")}.</p>
+     <div class="row"><button class="sec" id="bSync">⟳ Actualizar ahora</button><button id="bDesc">Desconectar</button></div>`
+   :`<p class="muted" style="margin-top:0">Con la clave que da Prevención, este móvil ve al momento lo que mueven los demás y envía sin WhatsApp.</p>
+     <div class="grid2"><label class="f span2"><span>Nombre de este móvil</span><input id="cNom" placeholder="Almacén 1" autocomplete="off"></label>
+     <label class="f span2"><span>Clave de acceso</span><input id="cTok" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+     <label class="f span2"><span>Repositorio</span><input id="cRepo" value="${REPO_DEF}" autocomplete="off"></label></div>
+     <div id="cErr"></div><button class="pri big" id="bCon" style="margin-top:8px">Conectar</button>`}
+   <button id="bArch" style="width:100%;margin-top:8px">Cargar archivo de datos a mano</button></div>
   <p class="muted">Programa ${BUILD}. Datos del ${fd(S.datos.fecha)} (${S.datos.programa||"?"}).</p>`;
   $$("[data-del]").forEach(b=>b.onclick=async()=>{if(!confirm("¿Borrar este cambio del móvil? No se enviará."))return;await itemDel(b.dataset.del);await cargarItems();vEnviar()});
   if($("#bEnv"))$("#bEnv").onclick=()=>enviar(pend);
   if($("#bReenv"))$("#bReenv").onclick=()=>{const last=env[0]&&env[0].lote;enviar(S.items.filter(i=>i.lote===last),true)};
   if($("#bLimpiar"))$("#bLimpiar").onclick=async()=>{if(!confirm(`¿Borrar del móvil ${env.length} cambio(s) ya enviados? Los datos de equipos se quedan.`))return;for(const i of env)await itemDel(i.id);await cargarItems();vEnviar()};
+  $("#bArch").onclick=()=>{$("#inDatos").value="";$("#inDatos").click()};
+  if($("#bSync"))$("#bSync").onclick=()=>sincronizar(false);
+  if($("#bDesc"))$("#bDesc").onclick=()=>{if(!confirm("¿Desconectar este móvil? Lo hecho se queda; para volver a conectar hará falta la clave."))return;localStorage.removeItem("izm-gh");hdr();vEnviar()};
+  if($("#bCon"))$("#bCon").onclick=async()=>{const cfg={nombre:$("#cNom").value.trim(),token:$("#cTok").value.trim(),repo:$("#cRepo").value.trim()||REPO_DEF};
+    if(!cfg.nombre||!cfg.token){$("#cErr").innerHTML=`<div class="note bad">Pon el nombre del móvil y la clave.</div>`;return}
+    localStorage.setItem("izm-gh",JSON.stringify(cfg));
+    try{const r=await ghFetch("");if(r===null)throw new Error("No se encuentra el repositorio.");toast("Conectado");hdr();await sincronizar(true);vEnviar()}
+    catch(e){localStorage.removeItem("izm-gh");$("#cErr").innerHTML=`<div class="note bad">${esc(e.message)}</div>`}};
 }
 async function enviar(items,reenvio){
   if(!items.length)return;
+  if(gh()&&!reenvio){
+    for(const i of items){i.cola=true;await itemPut(i)}
+    if(!navigator.onLine){await cargarItems();toast("Sin cobertura: queda en cola y se envía sola al volver la señal.",5000);return vEnviar()}
+    const b=$("#bEnv");if(b){b.disabled=true;b.textContent="Enviando…"}
+    try{await subirGH(items);toast(`Enviado a Prevención (${items.length})`)}catch(e){toast("No se ha podido enviar; queda en cola: "+e.message,6000);await cargarItems()}
+    return vEnviar();
+  }
   const lote=reenvio?items[0].lote:`${hoy()}_${hora().replace(":","")}`;
   const doc={formato:"izado-movil",version:1,programa:BUILD,datos:S.datos.fecha,lote,generado:new Date().toISOString(),
     items:items.map(({enviado,enviadoEl,lote,ts,...r})=>({...r,fotos:(r.fotos||[]).map(({mini,...f})=>f)}))};
   const name=`izado-movil_${lote}.json`, blob=new Blob([JSON.stringify(doc)],{type:"application/json"});
   let ok=false;
   try{const file=new File([blob],name,{type:"application/json"});
-    if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:"Izado · envío del móvil",text:`Izado: ${items.length} cambio(s) del móvil (${fd(hoy())})`});ok=true}
+    if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:`Izado · envío del móvil · Para: ${CORREO_PRL}`,text:`Para: ${CORREO_PRL}\nIzado: ${items.length} cambio(s) del móvil (${fd(hoy())})`});ok=true}
   }catch(e){if(e&&e.name==="AbortError"){toast("Envío cancelado");return}}
-  if(!ok){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);toast(`Descargado ${name}. Mándalo a Prevención.`,5000);ok=true}
+  if(!ok){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);toast(`Descargado ${name}. Mándalo a ${CORREO_PRL}.`,6000);ok=true}
   if(ok&&!reenvio){for(const i of items){i.enviado=true;i.enviadoEl=`${fd(hoy())} ${hora()}`;i.lote=lote;await itemPut(i)}await cargarItems();vEnviar()}
 }
 window.addEventListener("beforeunload",e=>{if(S.items.some(i=>!i.enviado)||(S.draft&&S.draft.sucio)){e.preventDefault();e.returnValue=""}});
@@ -393,8 +470,13 @@ window.addEventListener("beforeunload",e=>{if(S.items.some(i=>!i.enviado)||(S.dr
   if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
   try{S.datos=await kvGet("datos")}catch(e){}
   hdr();
+  if(!S.datos&&gh())await sincronizar(true);
   if(!S.datos)return go("bienvenida");
   await cargarItems();go("equipos");
+  if(gh())sincronizar(true);
+  window.addEventListener("online",()=>setTimeout(()=>sincronizar(true),1500));
+  setInterval(()=>{if(document.visibilityState==="visible")sincronizar(true)},60000);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sincronizar(true)});
 })();
 </script>
 </body></html>
