@@ -79,7 +79,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:.
 <input type="file" id="inFoto" accept="image/*" capture="environment" hidden>
 <script>
 "use strict";
-const PROGRAMA="V12", BUILD="V12-2";
+const PROGRAMA="V12", BUILD="V12-3";
 const CORREO_PRL="prevencion.milsa@milsatrillo.com", REPO_DEF="ALD1978/Izado-datos", DATOS_PATH="datos/Izado-datos-movil.json";
 document.getElementById("ver").textContent=PROGRAMA;
 
@@ -178,7 +178,7 @@ function go(tab,arg){
   if(S.draft&&S.draft.sucio&&S.tab!==tab&&!confirm("Hay datos sin guardar en esta pantalla. ¿Salir sin guardar?"))return;
   S.draft=null;S.tab=tab;$$("#nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===tab.split(":")[0]?"page":"false"));
   window.scrollTo(0,0);
-  ({equipos:vEquipos,ficha:vFicha,revision:vRevision,alta:vAlta,mover:vMover,enviar:vEnviar,bienvenida:vBienvenida})[tab](arg);
+  ({admin:vAdmin,bloqueado:vBloqueado,equipos:vEquipos,ficha:vFicha,revision:vRevision,alta:vAlta,mover:vMover,enviar:vEnviar,bienvenida:vBienvenida})[tab](arg);
 }
 
 /* ---------- Bienvenida ---------- */
@@ -370,16 +370,77 @@ function movilId(){let m=localStorage.getItem("izm-movil-id");if(!m){m=Math.rand
 function b64utf8(s){const u=new TextEncoder().encode(s);let b="";for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)}
 async function ghFetch(path,opt={},raw){const c=gh();const r=await fetch(`https://api.github.com/repos/${c.repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`,{...opt,cache:"no-store",headers:{Authorization:`Bearer ${c.token}`,Accept:raw?"application/vnd.github.raw+json":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28",...(opt.headers||{})}});
   if(r.status===404)return null;if(r.status===401||r.status===403)throw new Error("La clave no vale o no tiene permiso (pide una nueva a Prevención).");if(!r.ok)throw new Error(`GitHub respondió ${r.status}`);return raw?r.text():r.json()}
-const ghPut=(path,b64,msg)=>ghFetch(path,{method:"PUT",body:JSON.stringify({message:msg,content:b64})});
+const ghPut=(path,b64,msg,sha)=>ghFetch(path,{method:"PUT",body:JSON.stringify(sha?{message:msg,content:b64,sha}:{message:msg,content:b64})});
+function deb64utf8(b){const s=atob(String(b||"").replace(/\s/g,""));const u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return new TextDecoder().decode(u)}
+async function ghJSON(path){const r=await ghFetch(path);if(!r||Array.isArray(r))return {sha:null,data:null};return {sha:r.sha,data:JSON.parse(deb64utf8(r.content))}}
+async function ghSaveJSON(path,data,msg,sha){return ghPut(path,b64utf8(JSON.stringify(data,null,1)),msg,sha)}
+/* ---------- Accesos: registro de móviles, bloqueo y administradores ---------- */
+const ACCESOS="accesos.json";
+async function leerAccesos(){const r=await ghJSON(ACCESOS);const d=r.data||{};return {sha:r.sha,data:{admins:d.admins||[],bloqueados:d.bloqueados||{}}}}
+async function registrarMovil(){
+  // Como mucho una vez al día: alta del móvil y última conexión (moviles/<id>.json)
+  const yo=movilId(), c=gh(), k="izm-reg-"+hoy();if(localStorage.getItem(k)===c.nombre)return;
+  const path=`moviles/${yo}.json`, r=await ghJSON(path), prev=r.data||{};
+  await ghSaveJSON(path,{id:yo,nombre:c.nombre,alta:prev.alta||hoy(),ultimaConexion:`${hoy()} ${hora()}`,programa:BUILD},`Móvil ${c.nombre}: conexión`,r.sha);
+  localStorage.setItem(k,c.nombre);
+}
+async function bloquearEste(info){
+  // Bloqueado por Prevención: se quitan la clave y los datos de este móvil
+  localStorage.removeItem("izm-gh");
+  try{await kvSet("datos",null);await kvSet("remotos",[]);for(const i of await itemsAll())await itemDel(i.id)}catch(e){}
+  S.datos=null;S.items=[];S.remotos=[];localStorage.setItem("izm-bloqueado",JSON.stringify(info||{}));hdr();go("bloqueado");
+}
+function vBloqueado(){const i=JSON.parse(localStorage.getItem("izm-bloqueado")||"{}");
+  $("#app").innerHTML=`<div class="card"><h2>Móvil bloqueado</h2><p>Prevención ha bloqueado este móvil${i.fecha?` el ${fd(i.fecha)}`:""}. Se han quitado de este móvil los datos de equipos y la clave.</p>
+  <p>Si es un error, habla con Prevención: <a class="code" href="mailto:${CORREO_PRL}" style="color:var(--brand-deep)">${CORREO_PRL}</a>. Para volver a usarlo hará falta una clave nueva.</p>
+  <button class="sec" id="bOtra">Conectar con una clave nueva</button></div>`;
+  $("#bOtra").onclick=()=>{localStorage.removeItem("izm-bloqueado");localStorage.removeItem("izm-movil-id");go("bienvenida")};
+}
+async function vAdmin(){
+  $("#app").innerHTML=`<button class="back" id="bBack">← Enviar</button><div class="card"><h2>Móviles</h2><p class="muted">Cargando…</p></div>`;
+  $("#bBack").onclick=()=>go("enviar");
+  let acc,movs,envs;
+  try{acc=await leerAccesos();movs=((await ghFetch("moviles"))||[]).filter(f=>f.name.endsWith(".json"));envs=((await ghFetch("envios"))||[]).filter(f=>f.name.endsWith(".json"))}
+  catch(e){$("#app .card").innerHTML=`<div class="note bad">${esc(e.message)}</div>`;return}
+  if(!acc.data.admins.includes(movilId())){$("#app .card").innerHTML=`<div class="note bad">Este móvil no es administrador.</div>`;return}
+  const M=[];for(const f of movs){try{M.push((await ghJSON("moviles/"+f.name)).data)}catch(e){}}
+  const act={};for(const f of envs){const m=f.name.replace(/\.json$/,"").split("_").pop();(act[m]=act[m]||[]).push(f.name)}
+  const ultimo=id=>{const l=(act[id]||[]).sort();return l.length?l[l.length-1].slice(0,10).split("-").reverse().join("/"):"—"};
+  const pinta=()=>{const B=acc.data.bloqueados,A=acc.data.admins;
+    $("#app").innerHTML=`<button class="back" id="bBack">← Enviar</button>
+    <div class="card"><h2>Móviles</h2><p class="muted" style="margin-top:0">Bloquear: el móvil quita su clave y sus datos en cuanto se conecta (con la app abierta, en un minuto como mucho). Para cortarlo del todo, borra también su clave en GitHub.</p>
+    <a class="btn sec" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">Claves en GitHub ↗</a></div>
+    <div class="list">${M.sort((a,b)=>String(a.nombre).localeCompare(b.nombre,"es")).map(m=>{const bl=B[m.id], ad=A.includes(m.id), yo=m.id===movilId();
+      return `<div class="card"><div><b>${esc(m.nombre)}</b> ${bl?'<span class="tag bad">Bloqueado</span>':'<span class="tag ok">Activo</span>'}${ad?'<span class="tag">Administrador</span>':""}${yo?'<span class="tag warn">Este móvil</span>':""}
+      <div class="muted">Alta ${fd(m.alta)} · última conexión ${m.ultimaConexion?fd(m.ultimaConexion.slice(0,10))+" "+esc(m.ultimaConexion.slice(11)):"—"} · ${(act[m.id]||[]).length} envío(s), último ${ultimo(m.id)} · ${esc(m.programa||"")}</div>${bl?`<div class="muted">Bloqueado el ${fd(bl.fecha)}${bl.motivo?": "+esc(bl.motivo):""}</div>`:""}</div>
+      ${yo?"":`<div class="row" style="margin-top:8px">${bl?`<button class="sec" data-un="${esc(m.id)}">Desbloquear</button>`:`<button class="pri" data-bl="${esc(m.id)}">Bloquear</button>`}<button data-ad="${esc(m.id)}">${ad?"Quitar administrador":"Hacer administrador"}</button></div>`}</div>`}).join("")||`<p class="muted">Aún no se ha conectado ningún móvil.</p>`}</div>`;
+    $("#bBack").onclick=()=>go("enviar");
+    const guardar=async(msg)=>{try{const r=await ghSaveJSON(ACCESOS,acc.data,msg,acc.sha);acc.sha=r&&r.content&&r.content.sha;toast("Guardado");pinta()}catch(e){toast("No se ha podido guardar: "+e.message+". Vuelve a abrir el panel.",6000)}};
+    const nom=id=>(M.find(m=>m.id===id)||{}).nombre||id;
+    $$("[data-bl]").forEach(b=>b.onclick=()=>{const id=b.dataset.bl;const motivo=prompt(`Bloquear «${nom(id)}». Motivo (perdido, cambio de persona…):`,"");if(motivo===null)return;acc.data.bloqueados[id]={fecha:hoy(),motivo:motivo.trim()};acc.data.admins=acc.data.admins.filter(x=>x!==id);guardar(`Bloquear móvil ${nom(id)}`)});
+    $$("[data-un]").forEach(b=>b.onclick=()=>{const id=b.dataset.un;if(!confirm(`¿Desbloquear «${nom(id)}»? Ese móvil ya quitó su clave: necesitará una clave nueva.`))return;delete acc.data.bloqueados[id];guardar(`Desbloquear móvil ${nom(id)}`)});
+    $$("[data-ad]").forEach(b=>b.onclick=()=>{const id=b.dataset.ad;const A=acc.data.admins;if(A.includes(id))acc.data.admins=A.filter(x=>x!==id);else{if(acc.data.bloqueados[id])return toast("Desbloquéalo antes.");A.push(id)}guardar(`Administradores: ${nom(id)}`)});
+  };
+  pinta();
+}
+async function hacermeAdmin(){
+  try{const acc=await leerAccesos();if(acc.data.admins.length)return toast("Ya hay administrador. Pídele que te dé permiso desde «Móviles».",5000);
+    await registrarMovil();acc.data.admins=[movilId()];await ghSaveJSON(ACCESOS,acc.data,`Administrador: ${gh().nombre}`,acc.sha);localStorage.setItem("izm-admin","1");localStorage.setItem("izm-hayadmin","1");toast("Este móvil es el administrador");vEnviar()}
+  catch(e){toast("No se ha podido: "+e.message,5000)}
+}
 let sincronizando=false;
 async function sincronizar(silencio){
   if(!gh()||sincronizando)return;if(!navigator.onLine){if(!silencio)toast("Sin cobertura: se usa lo guardado en el móvil.");return}
   sincronizando=true;const b=$("#btnDatos");b.disabled=true;b.textContent="⟳ …";
   try{
+    const acc=await leerAccesos(), yo=movilId();
+    if(acc.data.bloqueados[yo]){await bloquearEste(acc.data.bloqueados[yo]);return}
+    localStorage.setItem("izm-admin",acc.data.admins.includes(yo)?"1":"");localStorage.setItem("izm-hayadmin",acc.data.admins.length?"1":"");
+    try{await registrarMovil()}catch(e){}
     const txt=await ghFetch(DATOS_PATH,{},true);
     if(txt){const d=JSON.parse(txt);if(d.formato==="izado-datos-movil"&&(!S.datos||d.generado!==S.datos.generado)){await kvSet("datos",d);S.datos=d}}
     if(!S.datos)throw new Error("El repositorio aún no tiene el archivo de datos.");
-    const inc=new Set(S.datos.incluye||[]), yo=movilId();
+    const inc=new Set(S.datos.incluye||[]);
     let rem=((await kvGet("remotos"))||[]).filter(r=>!inc.has(r.name));
     const lst=(await ghFetch("envios"))||[];const ya=new Set(rem.map(r=>r.name));
     for(const f of lst){if(f.type!=="file"||!f.name.endsWith(".json")||inc.has(f.name)||ya.has(f.name)||f.name.includes("_"+yo+"."))continue;
@@ -428,6 +489,8 @@ function vEnviar(){
      <label class="f span2"><span>Clave de acceso</span><input id="cTok" type="password" autocomplete="off" placeholder="github_pat_…"></label>
      <label class="f span2"><span>Repositorio</span><input id="cRepo" value="${REPO_DEF}" autocomplete="off"></label></div>
      <div id="cErr"></div><button class="pri big" id="bCon" style="margin-top:8px">Conectar</button>`}
+   ${c&&localStorage.getItem("izm-admin")?`<button class="pri big" id="bAdm" style="margin-top:8px">Móviles: accesos y bloqueo</button>`:""}
+   ${c&&!localStorage.getItem("izm-hayadmin")?`<button class="sec" id="bSerAdm" style="width:100%;margin-top:8px">Ser el administrador (solo Prevención, la primera vez)</button>`:""}
    <button id="bArch" style="width:100%;margin-top:8px">Cargar archivo de datos a mano</button></div>
   <p class="muted">Programa ${BUILD}. Datos del ${fd(S.datos.fecha)} (${S.datos.programa||"?"}).</p>`;
   $$("[data-del]").forEach(b=>b.onclick=async()=>{if(!confirm("¿Borrar este cambio del móvil? No se enviará."))return;await itemDel(b.dataset.del);await cargarItems();vEnviar()});
@@ -436,6 +499,8 @@ function vEnviar(){
   if($("#bLimpiar"))$("#bLimpiar").onclick=async()=>{if(!confirm(`¿Borrar del móvil ${env.length} cambio(s) ya enviados? Los datos de equipos se quedan.`))return;for(const i of env)await itemDel(i.id);await cargarItems();vEnviar()};
   $("#bArch").onclick=()=>{$("#inDatos").value="";$("#inDatos").click()};
   if($("#bSync"))$("#bSync").onclick=()=>sincronizar(false);
+  if($("#bAdm"))$("#bAdm").onclick=()=>go("admin");
+  if($("#bSerAdm"))$("#bSerAdm").onclick=()=>{if(confirm("¿Hacer administrador a este móvil? Podrá bloquear a los demás. Hazlo solo en el móvil u ordenador de Prevención."))hacermeAdmin()};
   if($("#bDesc"))$("#bDesc").onclick=()=>{if(!confirm("¿Desconectar este móvil? Lo hecho se queda; para volver a conectar hará falta la clave."))return;localStorage.removeItem("izm-gh");hdr();vEnviar()};
   if($("#bCon"))$("#bCon").onclick=async()=>{const cfg={nombre:$("#cNom").value.trim(),token:$("#cTok").value.trim(),repo:$("#cRepo").value.trim()||REPO_DEF};
     if(!cfg.nombre||!cfg.token){$("#cErr").innerHTML=`<div class="note bad">Pon el nombre del móvil y la clave.</div>`;return}
@@ -470,6 +535,7 @@ window.addEventListener("beforeunload",e=>{if(S.items.some(i=>!i.enviado)||(S.dr
   if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
   try{S.datos=await kvGet("datos")}catch(e){}
   hdr();
+  if(localStorage.getItem("izm-bloqueado")&&!gh())return go("bloqueado");
   if(!S.datos&&gh())await sincronizar(true);
   if(!S.datos)return go("bienvenida");
   await cargarItems();go("equipos");
