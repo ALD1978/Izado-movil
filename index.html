@@ -42,6 +42,7 @@ input:focus,select:focus,textarea:focus,button:focus-visible{outline:3px solid v
 .eq{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-height:56px;text-align:left;width:100%}
 .eq img,.eq .ph{width:44px;height:44px;border-radius:6px;object-fit:cover;flex:none;background:var(--bg);border:1px solid var(--line)}
 .eq .m{flex:1;min-width:0}.eq .m div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cid{display:inline-block;width:14px;height:14px;border-radius:3px;background:var(--cid);box-shadow:0 0 0 1.5px var(--surface),0 0 0 2.5px var(--line);vertical-align:-2px;margin-right:6px;flex:none}
 .code{font:700 .95rem ui-monospace,Menlo,monospace}
 .tag{display:inline-block;font-size:.75rem;padding:1px 6px;border-radius:5px;border:1px solid var(--line);color:var(--muted);margin-right:4px}
 .tag.ok{background:var(--okbg);color:var(--ok);border-color:transparent}.tag.bad{background:var(--badbg);color:var(--bad);border-color:transparent}.tag.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
@@ -79,7 +80,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:.
 <input type="file" id="inFoto" accept="image/*" capture="environment" hidden>
 <script>
 "use strict";
-const PROGRAMA="V13", BUILD="V13-1";
+const PROGRAMA="V13", BUILD="V13-2";
 const CORREO_PRL="prevencion.milsa@milsatrillo.com", REPO_DEF="ALD1978/Izado-datos", DATOS_PATH="datos/Izado-datos-movil.json";
 document.getElementById("ver").textContent=PROGRAMA;
 
@@ -97,6 +98,13 @@ const CHECK={
   otro:["Sin deformaciones, fisuras ni desgaste apreciable","Funciona según el manual del fabricante"]};
 const COLOR_TEXTIL=[[1,"Violeta"],[2,"Verde"],[3,"Amarillo"],[4,"Gris"],[5,"Rojo"],[6,"Marrón"],[8,"Azul"],[10,"Naranja"]];
 const NAVE="NAVE", BAJA="BAJA";
+/* Color identificativo Milsa por tipo (decisión de Prevención, 24/11/2026): grilletes granate, cáncamos negro, tensores verde. */
+const COLOR_ID={grillete:["Granate","#7b1e2b"],cancamo:["Negro","#161616"],tensor:["Verde","#2e7d32"]};
+function claseId(e){ const c=String((e&&(e.id||e.codigo||e.c))||"").toUpperCase(), t=String((e&&(e.tipo||e.t))||"");
+  if(/^GLL-/.test(c)||/^Grillete/i.test(t)) return "grillete"; if(/^CC-/.test(c)||/^C[áa]ncamo/i.test(t)) return "cancamo"; if(/^TN-/.test(c)||/^Tensor/i.test(t)) return "tensor"; return ""; }
+const colorId=e=>COLOR_ID[claseId(e)]||null;
+const swId=e=>{ const c=colorId(e); return c?`<span class="cid" style="--cid:${c[1]}" title="Color identificativo: ${c[0]}" role="img" aria-label="Color identificativo: ${c[0]}"></span>`:""; };
+
 
 /* ---------- Utilidades ---------- */
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -219,12 +227,13 @@ function buscar(q,ub){
 }
 function vEquipos(){
   $("#app").innerHTML=`<button class="pri big" id="bEsl">📷 Eslinga con foto</button>
+  <div class="muted" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><span><span class="cid" style="--cid:#7b1e2b"></span>Grilletes granate</span><span><span class="cid" style="--cid:#161616"></span>Cáncamos negro</span><span><span class="cid" style="--cid:#2e7d32"></span>Tensores verde</span></div>
   <div class="card"><label class="f"><span>Buscar por código, nº de serie, ON!Track o texto</span><input id="q" type="search" placeholder="GLL-00454, 04011, EE-677…" value="${esc(S.q)}" autocomplete="off"></label>
   <div class="chips" style="margin-top:8px" id="fUb"><button data-u="" aria-pressed="${!S.fUb}">Todas</button>${ubicaciones().map(([u,n])=>`<button data-u="${esc(u)}" aria-pressed="${S.fUb===u}">${esc(n)}</button>`).join("")}</div></div>
   <div class="muted" id="nRes"></div><div class="list" id="lst"></div>`;
   $("#bEsl").onclick=()=>go("alta",{tipo:"Eslinga textil de banda",foto:true});
   const pinta=()=>{const r=buscar(S.q,S.fUb);$("#nRes").textContent=`${r.length} equipo${r.length===1?"":"s"}${r.length>150?" (se muestran 150; afina la búsqueda)":""}`;
-    $("#lst").innerHTML=r.slice(0,150).map(e=>`<button class="eq" data-c="${esc(e.c)}">${e.mini?`<img src="${e.mini}" alt="" loading="lazy">`:`<span class="ph"></span>`}<span class="m"><div><span class="code">${esc(e.c)}</span> ${estTag(e)}${e.nuevo?'<span class="tag warn">Nuevo</span>':""}</div><div class="muted">${esc(e.t||"")}${e.cmu!=null?` · ${fnum(e.cmu)} t`:""}${e.l?` · ${fnum(e.l)} m`:""} · ${esc(ubicName(e.ub))}</div></span></button>`).join("")||`<p class="muted">No hay equipos con esa búsqueda. ¿Es nuevo? Dalo de alta en «Alta».</p>`;
+    $("#lst").innerHTML=r.slice(0,150).map(e=>`<button class="eq" data-c="${esc(e.c)}">${e.mini?`<img src="${e.mini}" alt="" loading="lazy">`:`<span class="ph"></span>`}<span class="m"><div>${swId(e)}<span class="code">${esc(e.c)}</span> ${estTag(e)}${e.nuevo?'<span class="tag warn">Nuevo</span>':""}</div><div class="muted">${esc(e.t||"")}${e.cmu!=null?` · ${fnum(e.cmu)} t`:""}${e.l?` · ${fnum(e.l)} m`:""} · ${esc(ubicName(e.ub))}</div></span></button>`).join("")||`<p class="muted">No hay equipos con esa búsqueda. ¿Es nuevo? Dalo de alta en «Alta».</p>`;
     $$("#lst .eq").forEach(b=>b.onclick=()=>go("ficha",b.dataset.c))};
   $("#q").oninput=e=>{S.q=e.target.value;pinta()};
   $$("#fUb button").forEach(b=>b.onclick=()=>{S.fUb=b.dataset.u;$$("#fUb button").forEach(x=>x.setAttribute("aria-pressed",x===b));pinta()});
@@ -234,8 +243,8 @@ function vFicha(c){
   const e=S.eq.get(c);if(!e)return go("equipos");
   const mios=S.items.filter(i=>i.equipo===c||(i.equipos||[]).includes(c)||(i.clase==="alta"&&i.codigo===c));
   $("#app").innerHTML=`<button class="back" id="bBack">← Equipos</button>
-  <div class="card"><div class="row" style="align-items:flex-start">${e.mini?`<img src="${e.mini}" alt="" style="flex:none;width:96px;height:96px;object-fit:cover;border-radius:8px">`:""}<div><div class="code" style="font-size:1.2rem">${esc(e.c)}</div><div>${esc(e.t||"")}</div><div>${estTag(e)}</div></div></div>
-  <dl style="margin-top:10px">${[["Descripción",e.d],["Marca",e.m],["CMU",e.cmu!=null?fnum(e.cmu)+" t":""],["Longitud",e.l?fnum(e.l)+" m":""],["Material",e.mat],["Rosca",e.rosca],["Color",e.col],["Nº de serie",e.serie],["ON!Track",e.ot],["Ubicación",ubicName(e.ub)],["Última revisión",e.ult?fd(e.ult):""],["Próxima revisión",e.prox?fd(e.prox):""]].filter(r=>r[1]).map(r=>`<dt>${r[0]}</dt><dd>${esc(r[1])}</dd>`).join("")}</dl></div>
+  <div class="card"><div class="row" style="align-items:flex-start">${e.mini?`<img src="${e.mini}" alt="" style="flex:none;width:96px;height:96px;object-fit:cover;border-radius:8px">`:""}<div><div class="code" style="font-size:1.2rem">${swId(e)}${esc(e.c)}</div><div>${esc(e.t||"")}</div><div>${estTag(e)}</div></div></div>
+  <dl style="margin-top:10px">${[["Color identificativo",(colorId(e)||[])[0]],["Descripción",e.d],["Marca",e.m],["CMU",e.cmu!=null?fnum(e.cmu)+" t":""],["Longitud",e.l?fnum(e.l)+" m":""],["Material",e.mat],["Rosca",e.rosca],["Color",e.col],["Nº de serie",e.serie],["ON!Track",e.ot],["Ubicación",ubicName(e.ub)],["Última revisión",e.ult?fd(e.ult):""],["Próxima revisión",e.prox?fd(e.prox):""]].filter(r=>r[1]).map(r=>`<dt>${r[0]}</dt><dd>${esc(r[1])}</dd>`).join("")}</dl></div>
   <button class="pri big" id="bRev">Revisar este equipo</button>
   <div class="row"><button class="sec" id="bFoto">📷 Foto / incidencia</button><button class="sec" id="bMov">⇄ Moverlo</button></div>
   ${mios.length?`<div class="card"><h3 style="margin-top:0">Hecho en este móvil</h3>${mios.map(i=>`<div class="it"><div class="m"><b>${esc(etiqueta(i))}</b><div class="muted">${fd(i.fecha)} ${esc(i.hora||"")} · ${i.enviado?"enviado":"sin enviar"}</div></div></div>`).join("")}</div>`:""}`;
